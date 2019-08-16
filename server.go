@@ -13,6 +13,8 @@ const (
 
 	stunBindingRequestType  = 0x0001
 	stunBindingResponseType = 0x0101
+
+	stunMappedAddressAttrType = 0x0001
 )
 
 type stunBindingRequest struct {
@@ -50,9 +52,16 @@ func main() {
 
 		response := stunBindingResponse{
 			transactionId: request.transactionId,
+			attrs: []stunAttr{
+				{
+					typ: stunMappedAddressAttrType,
+					// value: serializeStunAddressAttrV6([]byte("MESSAGE........."), 34171),
+					value: serializeStunAddressAttrV6([]byte("MESG"), 34171),
+				},
+			},
 		}
 
-		log.Printf("Got %s and sending %s", request, response)
+		log.Printf("Got %#v and sending %#v", request, response)
 
 		conn.WriteTo(serializeStunBindingResponse(response), remoteAddr)
 		if err != nil {
@@ -128,6 +137,23 @@ func serializeStunBindingResponse(resp stunBindingResponse) []byte {
 		attrBuffer = attrBuffer[(stunAttrHeaderSize + roundUpTo4ByteBoundary(len(attr.value))):]
 	}
 	return p
+}
+
+func serializeStunAddressAttrV6(address []byte, port uint16) []byte {
+	var family uint16 = 0
+	if len(address) == 4 {
+		family = 1 // ipv4
+	} else if len(address) == 16 {
+		family = 2 // ipv6
+	} else {
+		panic("Address must be either ipv6 (16 bytes) or ipv4 (4 bytes)")
+	}
+
+	attrValue := make([]byte, 4+len(address))
+	binary.BigEndian.PutUint16(attrValue[0:2], family)
+	binary.BigEndian.PutUint16(attrValue[2:4], port)
+	copy(attrValue[4:], address)
+	return attrValue
 }
 
 func roundUpTo4ByteBoundary(val int) int {
