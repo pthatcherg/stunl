@@ -34,10 +34,11 @@ type stunAttr struct {
 
 func main() {
 	localAddr := "0.0.0.0:3478"
-	conn, err := net.ListenPacket("udp", localAddr)
+	conn, err := net.ListenPacket("udp4", localAddr)
 	if err != nil {
 		log.Fatalf("Failed to listen on UDP %s", localAddr)
 	}
+	log.Printf("Listening on %s", conn.LocalAddr())
 	for {
 		buf := make([]byte, 1500)
 		packetLen, remoteAddr, err := conn.ReadFrom(buf)
@@ -125,7 +126,7 @@ func serializeStunBindingResponse(resp stunBindingResponse) []byte {
 
 	p := make([]byte, size)
 	binary.BigEndian.PutUint16(p[0:2], stunBindingResponseType)
-	binary.BigEndian.PutUint16(p[2:4], 0)
+	binary.BigEndian.PutUint16(p[2:4], uint16(size-stunHeaderSize))
 	binary.BigEndian.PutUint32(p[4:8], stunMagicCookie)
 	copy(p[8:20], resp.transactionId)
 
