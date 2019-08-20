@@ -101,7 +101,7 @@ function handleCandidate(candidate, stats) {
   // if ((stats.messageCount % 100) == 1) {
   stats.timeElapsedMs = now() - stats.startTime;
   stats.throughputKbps = stats.byteCount * 8 / stats.timeElapsedMs;
-  writeStats(stats);
+  // writeStats(stats);
   // }
 }
 
