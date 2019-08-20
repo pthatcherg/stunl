@@ -56,8 +56,8 @@ func main() {
 			attrs: []stunAttr{
 				{
 					typ: stunMappedAddressAttrType,
-					// value: serializeStunAddressAttrV6([]byte("MESSAGE........."), 34171),
-					value: serializeStunAddressAttrV6([]byte("MESG"), 34171),
+					// value: serializeMessageAsStunAddressAttrV4([]byte("0123456789ABCDEF01")),
+					value: serializeMessageAsStunAddressAttrV4([]byte("012345")),
 				},
 			},
 		}
@@ -80,6 +80,7 @@ func parseStunBindingRequest(p []byte) *stunBindingRequest {
 	cookie := binary.BigEndian.Uint32(p[4:8])
 	transactionId := p[8:20]
 	unparsedAttrs := p[20:]
+	log.Printf("AttrsLength: %d\n", attrsLength)
 	if stunType != stunBindingRequestType {
 		return nil
 	}
@@ -103,7 +104,6 @@ func parseStunBindingRequest(p []byte) *stunBindingRequest {
 		if int(attrLength) > len(attrValue) {
 			break
 		}
-
 		parsedAttrs = append(parsedAttrs, stunAttr{
 			typ:   attrType,
 			value: copyBytes(attrValue[:attrLength]),
@@ -140,7 +140,26 @@ func serializeStunBindingResponse(resp stunBindingResponse) []byte {
 	return p
 }
 
-func serializeStunAddressAttrV6(address []byte, port uint16) []byte {
+func serializeMessageAsStunAddressAttrV6(mesg []byte) []byte {
+	return serializeMessageAsStunAddressAttr(mesg, 16, 2)
+}
+
+func serializeMessageAsStunAddressAttrV4(mesg []byte) []byte {
+	return serializeMessageAsStunAddressAttr(mesg, 4, 2)
+}
+
+func serializeMessageAsStunAddressAttr(mesg []byte, addressLength, portLength int) []byte {
+	addressPortLength := addressLength + portLength
+	if len(mesg) > addressPortLength {
+		panic("Message is too big.")
+	}
+	if len(mesg) < addressPortLength {
+		panic("Message is too small.")
+	}
+	return serializeStunAddressAttr(mesg[:addressLength], binary.BigEndian.Uint16(mesg[addressLength:]))
+}
+
+func serializeStunAddressAttr(address []byte, port uint16) []byte {
 	var family uint16 = 0
 	if len(address) == 4 {
 		family = 1 // ipv4
