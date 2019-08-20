@@ -1,3 +1,9 @@
+// TODO:
+// - Spawn off connections that can be written to like UDP sockets
+// - Support reading data from ufrags
+// - Support many ports in parallel
+// - Don't send the send thing twice to the same transaction ID (ignore resends)
+
 package main
 
 import (
@@ -38,7 +44,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to listen on UDP %s", localAddr)
 	}
-	log.Printf("Listening on %s", conn.LocalAddr())
+	// log.Printf("Listening on %s", conn.LocalAddr())
 	for {
 		buf := make([]byte, 1500)
 		packetLen, remoteAddr, err := conn.ReadFrom(buf)
@@ -51,18 +57,21 @@ func main() {
 			continue
 		}
 
+		msg := []byte("012345")
+		// msg := []byte("0123456789ABCDEFGH")
 		response := stunBindingResponse{
 			transactionId: request.transactionId,
 			attrs: []stunAttr{
 				{
-					typ: stunMappedAddressAttrType,
-					// value: serializeMessageAsStunAddressAttrV4([]byte("0123456789ABCDEF01")),
-					value: serializeMessageAsStunAddressAttrV4([]byte("012345")),
+					typ:   stunMappedAddressAttrType,
+					value: serializeMessageAsStunAddressAttrV4(msg),
+					// value: serializeMessageAsStunAddressAttrV6(msg),
 				},
 			},
 		}
 
-		log.Printf("Got %#v and sending %#v", request, response)
+		log.Printf("Sent %s", msg)
+		// log.Printf("Got %#v and sending %#v", request, response)
 
 		conn.WriteTo(serializeStunBindingResponse(response), remoteAddr)
 		if err != nil {
