@@ -80,7 +80,7 @@ func parseStunBindingRequest(p []byte) *stunBindingRequest {
 	cookie := binary.BigEndian.Uint32(p[4:8])
 	transactionId := p[8:20]
 	unparsedAttrs := p[20:]
-	log.Printf("AttrsLength: %d\n", attrsLength)
+	// log.Printf("AttrsLength: %d\n", attrsLength)
 	if stunType != stunBindingRequestType {
 		return nil
 	}
