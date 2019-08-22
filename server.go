@@ -58,7 +58,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to listen on UDP %s", localAddr)
 	}
-	// log.Printf("Listening on %s", conn.LocalAddr())
+	log.Printf("Listening on %s", conn.LocalAddr())
 	for {
 		buf := make([]byte, 1500)
 		packetLen, remoteAddr, err := conn.ReadFrom(buf)
@@ -104,7 +104,6 @@ func main() {
 		}
 
 		log.Printf("Sent %s to %s", payload, remoteAddr)
-		// log.Printf("Got %#v and sending %#v", request, response)
 
 		conn.WriteTo(serializeStunMessage(response), remoteAddr)
 		if err != nil {
@@ -124,7 +123,6 @@ func parseStunMessage(p []byte) *stunMessage {
 	cookie := binary.BigEndian.Uint32(p[4:8])
 	msg.transactionId = copyBytes(p[8:20])
 	unparsedAttrs := p[20:]
-	// log.Printf("AttrsLength: %d\n", attrsLength)
 
 	if cookie != 0x2112A442 {
 		return nil

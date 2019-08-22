@@ -16,3 +16,8 @@ The server to client traffic could probably be improved by making a special TURN
 server that fakes ICE checks from the remote side and inserts data in the
 address field that indicates where the packet came from, although it would have
 a lot of overhead.
+
+Directions:
+- go run server.go
+- open client.html in a browser
+- If you want to test only one direction or different settings, edit the code
