@@ -1,40 +1,50 @@
 // TODO:
-// - Write to the server using remote ufrag
+// - Figure out why the PeerConnections aren't being garbage collected, which prevents
+//   sending very much.
 // - Use TURN and peer reflexive candidates instead?
 // - Make WebTransport datagram API on top
 
 async function run() {
   const serverIp = "127.0.0.1";
   const serverPort = 3478;
-  await sendDataOverIceUfrag(serverIp, serverPort)
-  // await receiveDataOverStunAddress(serverIp, serverPort);
+  sendDataInIceUfrag(serverIp, serverPort)
+  receiveDataInStunAddress(serverIp, serverPort);
 }
 
-async function sendDataOverIceUfrag(serverIp, serverPort, payloads) {
-  pc = new RTCPeerConnection({});
+// Looks like we get about 100 messages per second, which would be up to
+// 200kpbs from one peer connection at a time with one m-line.
+async function sendDataInIceUfrag(serverIp, serverPort) {
+  const dummyPc = new RTCPeerConnection({});
+
+  let i = 0;
+  while (true) {
+    const payload = "Hello " + i++;
+    await runSenderPeerConnection(serverIp, serverPort, dummyPc, payload);
+  }
+}
+
+async function runSenderPeerConnection(serverIp, serverPort, dummyPc, payload) {
+  const pc = new RTCPeerConnection({});
   const dc = pc.createDataChannel("");
-  const offer = await pc.createOffer();
+
+  const offer = await pc.createOffer({iceRestart: true});
   console.log(`Got offer ${offer.sdp}`);
   await pc.setLocalDescription(offer);
 
   // This is the lazy way to make an answer.
   // Would probably be better to create one from scratch.
-  const pc2 = new RTCPeerConnection({});
-  await pc2.setRemoteDescription(offer)
-  const answer = await pc2.createAnswer();
-  // console.log(`Got answer ${answer.sdp}`);
-  pc2.close();
+  await dummyPc.setRemoteDescription(offer)
+  const answer = await dummyPc.createAnswer();
 
   // This can be up to 256 bytes post-encode, or 192 bytes pre-encode
-  const iceUfrag = btoa("this is a really big message.  so big you can't believe it");
+  const iceUfrag = btoa(payload);
   const icePwd = "passwordpasswordpassword";
-  let hackedSdp = answer.sdp.replace(
-      /a=ice-ufrag:.*/, `a=ice-ufrag:${iceUfrag}`).replace(
-          /a=ice-pwd:.*/, `a=ice-pwd:${icePwd}`);
+  let hackedSdp = answer.sdp.replace(/a=ice-ufrag:.*/, `a=ice-ufrag:${iceUfrag}`).replace(
+      /a=ice-pwd:.*/, `a=ice-pwd:${icePwd}`);
   
-  console.log(hackedSdp);
+  // console.log(hackedSdp);
   await pc.setRemoteDescription({
-    type: "pranswer",  // pranswer gets ICE but doesn't do much else
+    type: "answer",
     sdp: hackedSdp
   });
 
@@ -42,11 +52,11 @@ async function sendDataOverIceUfrag(serverIp, serverPort, payloads) {
     sdpMid: 0,
     candidate: `candidate:842163049 1 udp 1677732095 ${serverIp} ${serverPort} typ host`
   });
-  // Seems to send one message, which is OK.
-  pc.close();
+  // TODO: Figure out why this isn't being garbage collected.
+  await pc.close()
 }
 
-async function receiveDataOverStunAddress(serverIp, serverPort) {
+async function receiveDataInStunAddress(serverIp, serverPort) {
   // It seems to get 60kbps on a localhost link
   // It seems to hit a problem after 100 packets or so
   const serverAddr = `${serverIp}:${serverPort}`;
@@ -68,13 +78,13 @@ async function receiveDataOverStunAddress(serverIp, serverPort) {
   while (true) {
     for (let i = 0; i < parallelPeerConnections-1; i++) {
       // Don't wait.  Let it run in parallel.
-      runPeerConnection(serverAddr, requestIntervalMs, parallelRequests, iterationsPerPeerConnection, pcCloseDelayMillis, stats);
+      runReceiverPeerConnection(serverAddr, requestIntervalMs, parallelRequests, iterationsPerPeerConnection, pcCloseDelayMillis, stats);
     }
-    await runPeerConnection(serverAddr, requestIntervalMs, parallelRequests, iterationsPerPeerConnection, pcCloseDelayMillis, stats);
+    await runReceiverPeerConnection(serverAddr, requestIntervalMs, parallelRequests, iterationsPerPeerConnection, pcCloseDelayMillis, stats);
   }
 }
 
-async function runPeerConnection(serverAddr, requestIntervalMs, parallelRequests, iterationsPerPeerConnection, pcCloseDelayMillis, stats) {
+async function runReceiverPeerConnection(serverAddr, requestIntervalMs, parallelRequests, iterationsPerPeerConnection, pcCloseDelayMillis, stats) {
   stats.peerConnectionCount += 1;
   const pc = new RTCPeerConnection({
     iceServers: [{

@@ -1,5 +1,4 @@
 // TODO:
-// - Support reading data from ufrags
 // - Don't send the send thing twice to the same transaction ID (ignore resends)
 // - Use TURN and peer reflexive candidates instead?
 
