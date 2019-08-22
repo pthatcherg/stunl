@@ -2,7 +2,8 @@ A proof of concept that one can tunnel arbitrary data in STUN packets between a
 WebRTC client and a special STUN server.
 
 It gets about 60kbps from server to client by embedding data in STUN mapped
-address fields.
+address fields.  It's faster (200kbps) when using RTCIceTransport directly rather than
+RTCPeerConnection, if it's available.
 
 It gets about 200kbps from client to server by embedding data in ICE check
 ufrags.  It's faster (350kbps) when using RTCIceTransport directly rather than

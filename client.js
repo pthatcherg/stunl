@@ -17,13 +17,14 @@ async function run() {
   }
 
   if (!!ice) {
-    // receiveDataInStunAddressUsingIceTransport(serverIp, serverPort);
+    // This seems to handle about 200kbps with 25 in parallel.
+    receiveDataInStunAddressUsingIceTransports(serverIp, serverPort);
     // This seems to handle 354kbps with just one at at time.
     sendDataInIceUfragUsingIceTransports(serverIp, serverPort);
   } else {
     // It seems to get 60kbps on a localhost link
     // It seems to hit a problem after 100 packets or so
-    receiveDataInStunAddress(serverIp, serverPort);
+    receiveDataInStunAddressUsingPeerConnections(serverIp, serverPort);
     // Looks like we get about 100 messages per second, which would be up to
     // 200kpbs from one peer connection at a time with one m-line.
     // Setting 'recycle' to true slows down the messages over time, but
@@ -33,7 +34,7 @@ async function run() {
   }
 }
 
-async function receiveDataInStunAddress(serverIp, serverPort) {
+async function receiveDataInStunAddressUsingPeerConnections(serverIp, serverPort) {
   const serverAddr = `${serverIp}:${serverPort}`;
   const parallelPeerConnections = 1;
   const parallelRequests = 5;
@@ -53,13 +54,13 @@ async function receiveDataInStunAddress(serverIp, serverPort) {
   while (true) {
     for (let i = 0; i < parallelPeerConnections-1; i++) {
       // Don't wait.  Let it run in parallel.
-      runReceiverPeerConnection(serverAddr, requestIntervalMs, parallelRequests, iterationsPerPeerConnection, pcCloseDelayMillis, stats);
+      receivePayloadInStunAddressUsingPeerConnection(serverAddr, requestIntervalMs, parallelRequests, iterationsPerPeerConnection, pcCloseDelayMillis, stats);
     }
-    await runReceiverPeerConnection(serverAddr, requestIntervalMs, parallelRequests, iterationsPerPeerConnection, pcCloseDelayMillis, stats);
+    await receivePayloadInStunAddressUsingPeerConnection(serverAddr, requestIntervalMs, parallelRequests, iterationsPerPeerConnection, pcCloseDelayMillis, stats);
   }
 }
 
-async function runReceiverPeerConnection(serverAddr, requestIntervalMs, parallelRequests, iterationsPerPeerConnection, pcCloseDelayMillis, stats) {
+async function receivePayloadInStunAddressUsingPeerConnection(serverAddr, requestIntervalMs, parallelRequests, iterationsPerPeerConnection, pcCloseDelayMillis, stats) {
   stats.peerConnectionCount += 1;
   const pc = new RTCPeerConnection({
     iceServers: [{
@@ -170,6 +171,44 @@ async function sendPayloadInIceUfragUsingIceTransport(serverIp, serverPort, payl
   ice.gather({});
   // Seems to be enough for one packet to escape.
   await sleep(1);
+  ice.stop();
+}
+
+async function receiveDataInStunAddressUsingIceTransports(serverIp, serverPort) {
+  const serverAddr = `${serverIp}:${serverPort}`;
+  const requestIntervalMs = 5;
+  const parallelRequests = 25;
+  const stats = {
+    requestIntervalMs: requestIntervalMs,
+    messageCount: 0,
+    byteCount: 0,
+    timeElapsedMs: 0,
+    startTime: now(),
+    throughputKbps: 0,
+    peerConnectionCount: 0
+  };
+  writeStats(stats);
+  while (true) {
+    for (let i = 0; i < parallelRequests; i++) {
+      receivePayloadInStunAddressUsingIceTransport(serverAddr, stats);
+    }
+    await receivePayloadInStunAddressUsingIceTransport(serverAddr, stats);
+    await sleep(requestIntervalMs-1);
+  }
+}
+
+async function receivePayloadInStunAddressUsingIceTransport(serverAddr, stats) {
+  const ice = new RTCIceTransport();
+  ice.onicecandidate = evt => {
+    handleCandidate(evt.candidate, stats);
+  }
+  ice.gather({
+    iceServers: [{
+      urls: "stun:" + serverAddr,
+    }]
+  });
+  // Seems to be enough for one packet to escape.
+  await sleep(10);
   ice.stop();
 }
 
