@@ -1,11 +1,55 @@
 // TODO:
 // - Write to the server using remote ufrag
+// - Use TURN and peer reflexive candidates instead?
 // - Make WebTransport datagram API on top
 
 async function run() {
+  const serverIp = "127.0.0.1";
+  const serverPort = 3478;
+  await sendDataOverIceUfrag(serverIp, serverPort)
+  // await receiveDataOverStunAddress(serverIp, serverPort);
+}
+
+async function sendDataOverIceUfrag(serverIp, serverPort, payloads) {
+  pc = new RTCPeerConnection({});
+  const dc = pc.createDataChannel("");
+  const offer = await pc.createOffer();
+  console.log(`Got offer ${offer.sdp}`);
+  await pc.setLocalDescription(offer);
+
+  // This is the lazy way to make an answer.
+  // Would probably be better to create one from scratch.
+  const pc2 = new RTCPeerConnection({});
+  await pc2.setRemoteDescription(offer)
+  const answer = await pc2.createAnswer();
+  // console.log(`Got answer ${answer.sdp}`);
+  pc2.close();
+
+  // This can be up to 256 bytes post-encode, or 192 bytes pre-encode
+  const iceUfrag = btoa("this is a really big message.  so big you can't believe it");
+  const icePwd = "passwordpasswordpassword";
+  let hackedSdp = answer.sdp.replace(
+      /a=ice-ufrag:.*/, `a=ice-ufrag:${iceUfrag}`).replace(
+          /a=ice-pwd:.*/, `a=ice-pwd:${icePwd}`);
+  
+  console.log(hackedSdp);
+  await pc.setRemoteDescription({
+    type: "pranswer",  // pranswer gets ICE but doesn't do much else
+    sdp: hackedSdp
+  });
+
+  await pc.addIceCandidate({
+    sdpMid: 0,
+    candidate: `candidate:842163049 1 udp 1677732095 ${serverIp} ${serverPort} typ host`
+  });
+  // Seems to send one message, which is OK.
+  pc.close();
+}
+
+async function receiveDataOverStunAddress(serverIp, serverPort) {
   // It seems to get 60kbps on a localhost link
-  const serverAddr = "127.0.0.1:3478";
   // It seems to hit a problem after 100 packets or so
+  const serverAddr = `${serverIp}:${serverPort}`;
   const parallelPeerConnections = 1;
   const parallelRequests = 5;
   const requestIntervalMs = 5;
@@ -43,14 +87,22 @@ async function runPeerConnection(serverAddr, requestIntervalMs, parallelRequests
   pc.onicecandidate = evt => {
     handleCandidate(evt.candidate, stats);
   }
-  await triggerIce(pc);
+  await startIceGathering(pc);
   for (let i = 0; i < iterationsPerPeerConnection-1; i++) {
     await sleep(requestIntervalMs);
-    // triggerIce seems to be faster than cycleConfiguration
-    await triggerIce(pc, {iceRestart: true});
+    // triggerIce seems to be faster than cycleConfiguration,
+    // but cycleConfiguration works as well
+    await startIceGathering(pc, {iceRestart: true});
     // await cycleConfiguration(pc);
   }
   setTimeout(() => pc.close(), pcCloseDelayMillis);
+}
+
+async function startIceGathering(pc, options) {
+  const offer = await pc.createOffer(options);
+  // console.log(`Got offer ${offer.sdp}`);
+  await pc.setLocalDescription(offer);
+  // console.log(`Set local description ${offer.sdp}`);
 }
 
 async function cycleConfiguration(pc) {
@@ -60,22 +112,6 @@ async function cycleConfiguration(pc) {
   config1.iceServers[0].urls = "stun:127.0.0.1:1";
   await pc.setConfiguration(config1);
   await pc.setConfiguration(config2);
-}
-
-async function triggerIce(pc, options) {
-  const offer = await pc.createOffer(options);
-  // console.log(`Got offer ${offer.sdp}`);
-  await pc.setLocalDescription(offer);
-  // console.log(`Set local description ${offer.sdp}`);
-}
-
-function waitForCandidate(pc) {
-  const candidate = new Promise((resolve, reject) => {
-    pc.onicecandidate = evt => {
-      resolve(candidate);
-      pc.onicecandidate = null;
-    };
-  });
 }
 
 function extractMessageFromStunCandidate(candidate) {
@@ -109,6 +145,7 @@ function handleCandidate(candidate, stats) {
 
   const msg = extractMessageFromStunCandidate(candidate);
   // console.log(`Got message in STUN candidate: ${msg}`);
+  console.log(candidate.candidate);
   // console.log(candidate.address);
   // appendMessage(msg);
   stats.messageCount += 1;

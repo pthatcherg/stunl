@@ -1,14 +1,17 @@
 // TODO:
-// - Spawn off connections that can be written to like UDP sockets
 // - Support reading data from ufrags
 // - Don't send the send thing twice to the same transaction ID (ignore resends)
+// - Use TURN and peer reflexive candidates instead?
 
 package main
 
 import (
+	"encoding/base64"
 	"encoding/binary"
+	"fmt"
 	"log"
 	"net"
+	"strings"
 )
 
 const (
@@ -20,14 +23,11 @@ const (
 	stunBindingResponseType = 0x0101
 
 	stunMappedAddressAttrType = 0x0001
+	stunUsernameAttrType      = 0x0006
 )
 
-type stunBindingRequest struct {
-	transactionId []byte
-	attrs         []stunAttr
-}
-
-type stunBindingResponse struct {
+type stunMessage struct {
+	typ           uint16
 	transactionId []byte
 	attrs         []stunAttr
 }
@@ -37,7 +37,23 @@ type stunAttr struct {
 	value []byte
 }
 
+func (msg stunMessage) findAttr(attrType uint16) *stunAttr {
+	for _, attr := range msg.attrs {
+		if attr.typ == attrType {
+			return &attr
+		}
+	}
+	return nil
+}
+
 func main() {
+	payloads := make(chan []byte)
+	go func() {
+		for i := 0; true; i++ {
+			payloads <- []byte(fmt.Sprintf("Hi %15d", i))
+		}
+	}()
+
 	localAddr := "0.0.0.0:3478"
 	conn, err := net.ListenPacket("udp4", localAddr)
 	if err != nil {
@@ -51,48 +67,65 @@ func main() {
 			log.Fatalf("Failed to read from UDP %s", localAddr)
 		}
 
-		request := parseStunBindingRequest(buf[:packetLen])
-
-		if request == nil {
+		msg := parseStunMessage(buf[:packetLen])
+		if msg == nil {
+			log.Printf("Failed to parse %v", buf[:packetLen])
 			continue
 		}
 
-		// msg := []byte("012345")
-		msg := []byte("0123456789ABCDEFGH")
-		response := stunBindingResponse{
+		var response stunMessage
+		if msg.typ != stunBindingRequestType {
+			log.Printf("Unknown stun message type: %d\n", msg.typ)
+		}
+		username := msg.findAttr(stunUsernameAttrType)
+		if username != nil {
+			// log.Printf("Got stun ping with username: %s", username.value)
+			remoteUfrag := strings.SplitN(string(username.value), ":", 2)[0]
+			payload, err := base64.StdEncoding.DecodeString(remoteUfrag)
+			if err != nil {
+				log.Printf("Failed to decode remote ufrag %s.", remoteUfrag)
+				continue
+			}
+			log.Printf("Got %s from %s", string(payload), remoteAddr)
+			continue
+		}
+
+		// Must be a normal STUN binding request (not an ICE check)
+		request := msg
+		payload := <-payloads
+		response = stunMessage{
+			typ:           stunBindingResponseType,
 			transactionId: request.transactionId,
 			attrs: []stunAttr{
 				{
-					typ: stunMappedAddressAttrType,
-					// value: serializeMessageAsStunAddressAttrV4(msg),
-					value: serializeMessageAsStunAddressAttrV6(msg),
+					typ:   stunMappedAddressAttrType,
+					value: serializeBytesAsStunAddressAttrV6(payload),
 				},
 			},
 		}
 
-		log.Printf("Sent %s to %s", msg, remoteAddr)
+		log.Printf("Sent %s to %s", payload, remoteAddr)
 		// log.Printf("Got %#v and sending %#v", request, response)
 
-		conn.WriteTo(serializeStunBindingResponse(response), remoteAddr)
+		conn.WriteTo(serializeStunMessage(response), remoteAddr)
 		if err != nil {
 			log.Fatalf("Failed to write from UDP %s to %s", localAddr, remoteAddr)
 		}
 	}
 }
 
-func parseStunBindingRequest(p []byte) *stunBindingRequest {
+func parseStunMessage(p []byte) *stunMessage {
+	var msg stunMessage
 	if len(p) < stunHeaderSize {
 		return nil
 	}
-	stunType := binary.BigEndian.Uint16(p[0:2])
+
+	msg.typ = binary.BigEndian.Uint16(p[0:2])
 	attrsLength := binary.BigEndian.Uint16(p[2:4])
 	cookie := binary.BigEndian.Uint32(p[4:8])
-	transactionId := p[8:20]
+	msg.transactionId = copyBytes(p[8:20])
 	unparsedAttrs := p[20:]
 	// log.Printf("AttrsLength: %d\n", attrsLength)
-	if stunType != stunBindingRequestType {
-		return nil
-	}
 
 	if cookie != 0x2112A442 {
 		return nil
@@ -102,45 +135,38 @@ func parseStunBindingRequest(p []byte) *stunBindingRequest {
 		return nil
 	}
 
-	var parsedAttrs []stunAttr
 	for {
 		if len(unparsedAttrs) < stunAttrHeaderSize {
 			break
 		}
-		attrType := binary.BigEndian.Uint16(unparsedAttrs[0:2])
+		var attr stunAttr
+		attr.typ = binary.BigEndian.Uint16(unparsedAttrs[0:2])
 		attrLength := binary.BigEndian.Uint16(unparsedAttrs[2:4])
-		attrValue := unparsedAttrs[4:]
-		if int(attrLength) > len(attrValue) {
+		if int(attrLength) > len(unparsedAttrs[4:]) {
 			break
 		}
-		parsedAttrs = append(parsedAttrs, stunAttr{
-			typ:   attrType,
-			value: copyBytes(attrValue[:attrLength]),
-		})
+		attr.value = copyBytes(unparsedAttrs[4 : 4+attrLength])
+		msg.attrs = append(msg.attrs, attr)
 
 		unparsedAttrs = unparsedAttrs[(stunAttrHeaderSize + roundUpTo4ByteBoundary(int(attrLength))):]
 	}
-
-	return &stunBindingRequest{
-		transactionId: copyBytes(transactionId),
-		attrs:         parsedAttrs,
-	}
+	return &msg
 }
 
-func serializeStunBindingResponse(resp stunBindingResponse) []byte {
+func serializeStunMessage(msg stunMessage) []byte {
 	size := stunHeaderSize
-	for _, attr := range resp.attrs {
+	for _, attr := range msg.attrs {
 		size += (stunAttrHeaderSize + roundUpTo4ByteBoundary(len(attr.value)))
 	}
 
 	p := make([]byte, size)
-	binary.BigEndian.PutUint16(p[0:2], stunBindingResponseType)
+	binary.BigEndian.PutUint16(p[0:2], msg.typ)
 	binary.BigEndian.PutUint16(p[2:4], uint16(size-stunHeaderSize))
 	binary.BigEndian.PutUint32(p[4:8], stunMagicCookie)
-	copy(p[8:20], resp.transactionId)
+	copy(p[8:20], msg.transactionId)
 
 	attrBuffer := p[20:]
-	for _, attr := range resp.attrs {
+	for _, attr := range msg.attrs {
 		binary.BigEndian.PutUint16(attrBuffer[0:2], attr.typ)
 		binary.BigEndian.PutUint16(attrBuffer[2:4], uint16(len(attr.value)))
 		copy(attrBuffer[4:], attr.value)
@@ -149,15 +175,15 @@ func serializeStunBindingResponse(resp stunBindingResponse) []byte {
 	return p
 }
 
-func serializeMessageAsStunAddressAttrV6(mesg []byte) []byte {
-	return serializeMessageAsStunAddressAttr(mesg, 16, 2)
+func serializeBytesAsStunAddressAttrV6(mesg []byte) []byte {
+	return serializeBytesAsStunAddressAttr(mesg, 16, 2)
 }
 
-func serializeMessageAsStunAddressAttrV4(mesg []byte) []byte {
-	return serializeMessageAsStunAddressAttr(mesg, 4, 2)
+func serializeBytesAsStunAddressAttrV4(mesg []byte) []byte {
+	return serializeBytesAsStunAddressAttr(mesg, 4, 2)
 }
 
-func serializeMessageAsStunAddressAttr(mesg []byte, addressLength, portLength int) []byte {
+func serializeBytesAsStunAddressAttr(mesg []byte, addressLength, portLength int) []byte {
 	addressPortLength := addressLength + portLength
 	if len(mesg) > addressPortLength {
 		panic("Message is too big.")
