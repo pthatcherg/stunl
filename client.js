@@ -68,46 +68,72 @@ async function startIceGathering(pc, options) {
 // Looks like we get about 100 messages per second, which would be up to
 // 200kpbs from one peer connection at a time with one m-line.
 async function sendDataInIceUfrag(serverIp, serverPort) {
+  const pc = new RTCPeerConnection({});
   const dummyPc = new RTCPeerConnection({});
+  // Setting this to true slows down the messages over time, but
+  // it never runs out of PeerConnections.
+  // TODO: Figure out why it slows down over time and how to avoid it.
+  const recycle = true;
 
   let i = 0;
   while (true) {
     const payload = "Hello " + i++;
-    await runSenderPeerConnection(serverIp, serverPort, dummyPc, payload);
+    await runSenderPeerConnection(serverIp, serverPort, dummyPc, pc, payload, recycle);
   }
 }
 
-async function runSenderPeerConnection(serverIp, serverPort, dummyPc, payload) {
-  const pc = new RTCPeerConnection({});
-  const dc = pc.createDataChannel("");
+async function runSenderPeerConnection(serverIp, serverPort, dummyPc, pc, payload, recycle) {
+  if (!recycle) {
+    pc = new RTCPeerConnection({});
+  }
+  pc.addTransceiver("audio");
 
   const offer = await pc.createOffer({iceRestart: true});
-  console.log(`Got offer ${offer.sdp}`);
+  // console.log(`Got local offer ${offer.sdp}`);
   await pc.setLocalDescription(offer);
 
   // This is the lazy way to make an answer.
   // Would probably be better to create one from scratch.
   await dummyPc.setRemoteDescription(offer)
   const answer = await dummyPc.createAnswer();
+  // console.log(`Got remote answer ${answer.sdp}`);
+  await dummyPc.setLocalDescription(answer);
 
   // This can be up to 256 bytes post-encode, or 192 bytes pre-encode
   const iceUfrag = btoa(payload);
   const icePwd = "passwordpasswordpassword";
-  let hackedSdp = answer.sdp.replace(/a=ice-ufrag:.*/, `a=ice-ufrag:${iceUfrag}`).replace(
+  let hackedAnswerSdp = answer.sdp.replace(/a=ice-ufrag:.*/, `a=ice-ufrag:${iceUfrag}`).replace(
       /a=ice-pwd:.*/, `a=ice-pwd:${icePwd}`);
   
-  // console.log(hackedSdp);
   await pc.setRemoteDescription({
     type: "answer",
-    sdp: hackedSdp
+    sdp: hackedAnswerSdp
   });
 
   await pc.addIceCandidate({
-    sdpMid: 0,
-    candidate: `candidate:842163049 1 udp 1677732095 ${serverIp} ${serverPort} typ host`
+    sdpMLineIndex: 0,
+    candidate: `candidate:842163049 1 udp 1677732095 ${serverIp} ${serverPort} typ host`,
   });
-  // TODO: Figure out why this isn't being garbage collected.
-  await pc.close()
+
+  if (recycle) {
+    // In the meantime, instead, recycle the m-line.
+    const stoppedOfferSdp = offer.sdp.replace("m=audio 9", "m=audio 0");
+    // console.log(`Stopped offer: ${stoppedOfferSdp}`);
+    await pc.setLocalDescription({
+      type: "offer",
+      sdp: stoppedOfferSdp,
+    });
+    await dummyPc.setRemoteDescription({
+      type: "offer",
+      sdp: stoppedOfferSdp,
+    });
+    const stoppedAnswer = await dummyPc.createAnswer();
+    // console.log(`Stopped answer: ${stoppedAnswer.sdp}`);
+    await dummyPc.setLocalDescription(stoppedAnswer);
+    await pc.setRemoteDescription(stoppedAnswer);
+  } else {
+    pc.close();
+  }
 }
 
 function extractMessageFromStunCandidate(candidate) {
