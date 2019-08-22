@@ -10,7 +10,8 @@ ufrags.
 Tested only on a localhost network (127.0.0.1).
 
 Currently limited to 500 messages from client to server because PeerConnections
-aren't being garbage collected for some reason when sending.
+aren't being garbage collected for some reason when sending.  You can work
+around that by recycling m-lines, but that leads to a slow-down over time.
 
 The server to client traffic could probably be improved by making a special TURN
 server that fakes ICE checks from the remote side and inserts data in the
