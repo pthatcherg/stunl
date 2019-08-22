@@ -1,19 +1,39 @@
 // TODO:
 // - Figure out why the PeerConnections aren't being garbage collected, which prevents
 //   sending very much.
+// - Figure out why recycling m-lines slows down PeerConnections.
 // - Use TURN and peer reflexive candidates instead?
 // - Make WebTransport datagram API on top
+
 
 async function run() {
   const serverIp = "127.0.0.1";
   const serverPort = 3478;
-  receiveDataInStunAddress(serverIp, serverPort);
-  sendDataInIceUfrag(serverIp, serverPort)
+  ice = null;
+  try {
+    // New APIs available.  We can avoid PeerConnection.
+    ice = new RTCIceTransport();
+  } catch {
+  }
+
+  if (!!ice) {
+    // receiveDataInStunAddressUsingIceTransport(serverIp, serverPort);
+    // This seems to handle 354kbps with just one at at time.
+    sendDataInIceUfragUsingIceTransports(serverIp, serverPort);
+  } else {
+    // It seems to get 60kbps on a localhost link
+    // It seems to hit a problem after 100 packets or so
+    receiveDataInStunAddress(serverIp, serverPort);
+    // Looks like we get about 100 messages per second, which would be up to
+    // 200kpbs from one peer connection at a time with one m-line.
+    // Setting 'recycle' to true slows down the messages over time, but
+    // it never runs out of PeerConnections.
+    const recycle = true;
+    sendDataInIceUfragUsingPeerConnections(serverIp, serverPort, recycle);
+  }
 }
 
 async function receiveDataInStunAddress(serverIp, serverPort) {
-  // It seems to get 60kbps on a localhost link
-  // It seems to hit a problem after 100 packets or so
   const serverAddr = `${serverIp}:${serverPort}`;
   const parallelPeerConnections = 1;
   const parallelRequests = 5;
@@ -65,24 +85,17 @@ async function startIceGathering(pc, options) {
   await pc.setLocalDescription(offer);
 }
 
-// Looks like we get about 100 messages per second, which would be up to
-// 200kpbs from one peer connection at a time with one m-line.
-async function sendDataInIceUfrag(serverIp, serverPort) {
+async function sendDataInIceUfragUsingPeerConnections(serverIp, serverPort, recycle) {
   const pc = new RTCPeerConnection({});
   const dummyPc = new RTCPeerConnection({});
-  // Setting this to true slows down the messages over time, but
-  // it never runs out of PeerConnections.
-  // TODO: Figure out why it slows down over time and how to avoid it.
-  const recycle = true;
-
   let i = 0;
   while (true) {
     const payload = "Hello " + i++;
-    await runSenderPeerConnection(serverIp, serverPort, dummyPc, pc, payload, recycle);
+    await sendPayloadInIceUfragUsingPeerConnection(serverIp, serverPort, dummyPc, pc, payload, recycle);
   }
 }
 
-async function runSenderPeerConnection(serverIp, serverPort, dummyPc, pc, payload, recycle) {
+async function sendPayloadInIceUfragUsingPeerConnection(serverIp, serverPort, dummyPc, pc, payload, recycle) {
   if (!recycle) {
     pc = new RTCPeerConnection({});
   }
@@ -134,6 +147,30 @@ async function runSenderPeerConnection(serverIp, serverPort, dummyPc, pc, payloa
   } else {
     pc.close();
   }
+}
+
+async function sendDataInIceUfragUsingIceTransports(serverIp, serverPort) {
+  let i = 0;
+  while (true) {
+    const payload = "Hello " + i++;
+    await sendPayloadInIceUfragUsingIceTransport(serverIp, serverPort, payload);
+  }
+}
+
+async function sendPayloadInIceUfragUsingIceTransport(serverIp, serverPort, payload) {
+  const ice = new RTCIceTransport();
+  ice.start({
+    usernameFragment: btoa(payload),
+    password: "passwordpasswordpassword"
+  });
+  ice.addRemoteCandidate(new RTCIceCandidate({
+    sdpMid: "", 
+    candidate: `candidate:0 0 UDP 0 ${serverIp} ${serverPort} typ host`
+  }));
+  ice.gather({});
+  // Seems to be enough for one packet to escape.
+  await sleep(1);
+  ice.stop();
 }
 
 function extractMessageFromStunCandidate(candidate) {

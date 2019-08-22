@@ -5,13 +5,16 @@ It gets about 60kbps from server to client by embedding data in STUN mapped
 address fields.
 
 It gets about 200kbps from client to server by embedding data in ICE check
-ufrags.
+ufrags.  It's faster (350kbps) when using RTCIceTransport directly rather than
+RTCPeerConnection, if it's available.
 
 Tested only on a localhost network (127.0.0.1).
 
 Currently limited to 500 messages from client to server because PeerConnections
 aren't being garbage collected for some reason when sending.  You can work
-around that by recycling m-lines, but that leads to a slow-down over time.
+around that by recycling m-lines, but that leads to a slow-down over time.  This
+limitation is also not present when using RTCIceTransport directly (when
+available).
 
 The server to client traffic could probably be improved by making a special TURN
 server that fakes ICE checks from the remote side and inserts data in the
